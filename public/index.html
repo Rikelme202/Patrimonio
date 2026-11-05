@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Controle de Patrimônio</title>
+<link rel="icon" href="/logo.webp" type="image/webp">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="/" aria-label="Hola.com — suas soluções tecnológicas"><img src="/logo.webp" alt="Hola.com — suas soluções tecnológicas" width="2000" height="667"></a>
+    <nav id="nav" class="nav" hidden></nav>
+    <div id="userbox" class="userbox" hidden></div>
+  </div>
+</header>
+
+<main id="app" class="container"></main>
+
+<div id="modal" class="overlay" hidden><div class="modal" role="dialog" aria-modal="true"></div></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="printArea"></div>
+
+<script src="/barcode.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
