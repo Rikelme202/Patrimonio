@@ -7,7 +7,7 @@
   --bg:#eef1f3; --surface:#ffffff; --surface2:#f6f7f8; --field:#ffffff;
   --ink:#000000; --ink2:#2e3338; --muted:#4b5259; --line:#c3c9cf; --border:#7d858c;
   --pri:#0a5c66; --pri-ink:#ffffff; --pri-soft:#dcedef; --pri-text:#0a5c66;
-  --amber:#f2b705; --amber-ink:#000000;
+  --amber:#f2b705; --amber-ink:#000000; --toast-act:#7fd9e3;
   --ok:#1b7a35; --ok-bg:#ddf1e3; --warn:#a84300; --warn-bg:#ffe8d9; --bad:#c2001a; --bad-bg:#ffe3e6;
   --info:#0a5c66; --info-bg:#dcedef; --neutral-bg:#e3e7ea;
   --hover:rgba(0,0,0,.045); --press:rgba(0,0,0,.08);
@@ -24,7 +24,7 @@
   --bg:#000000; --surface:#17191b; --surface2:#222528; --field:#101213;
   --ink:#ffffff; --ink2:#d5dadf; --muted:#a9b1b8; --line:#353a3f; --border:#7a838b;
   --pri:#5cc8d4; --pri-ink:#000000; --pri-soft:#0e3237; --pri-text:#7fd9e3;
-  --amber:#ffcb2e; --amber-ink:#000000;
+  --amber:#ffcb2e; --amber-ink:#000000; --toast-act:#0a5c66;
   --ok:#4cd07a; --ok-bg:#0f2e1a; --warn:#ff9f43; --warn-bg:#3a2210; --bad:#ff6b6b; --bad-bg:#3d1216;
   --info:#7fd9e3; --info-bg:#0e3237; --neutral-bg:#2a2e32;
   --hover:rgba(255,255,255,.06); --press:rgba(255,255,255,.1);
@@ -39,7 +39,7 @@
     --bg:#000000; --surface:#17191b; --surface2:#222528; --field:#101213;
     --ink:#ffffff; --ink2:#d5dadf; --muted:#a9b1b8; --line:#353a3f; --border:#7a838b;
     --pri:#5cc8d4; --pri-ink:#000000; --pri-soft:#0e3237; --pri-text:#7fd9e3;
-    --amber:#ffcb2e; --amber-ink:#000000;
+    --amber:#ffcb2e; --amber-ink:#000000; --toast-act:#0a5c66;
     --ok:#4cd07a; --ok-bg:#0f2e1a; --warn:#ff9f43; --warn-bg:#3a2210; --bad:#ff6b6b; --bad-bg:#3d1216;
     --info:#7fd9e3; --info-bg:#0e3237; --neutral-bg:#2a2e32;
     --hover:rgba(255,255,255,.06); --press:rgba(255,255,255,.1);
@@ -309,9 +309,24 @@ button.kpi:hover{background:var(--surface2)}
 .pw button{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;color:var(--pri-text);font-size:15px;font-weight:650;cursor:pointer;padding:8px 10px;border-radius:8px}
 .auth .foot{font-size:14px;color:var(--muted);margin-top:18px}
 
+/* ---------- Sem internet ---------- */
+.offline{position:sticky;top:56px;z-index:29;background:var(--warn);color:#fff;text-align:center;font-size:14px;font-weight:650;padding:8px 16px}
+[data-theme=dark] .offline{color:#000}
+/* ---------- Seleção na lista (celular) ---------- */
+.show-m{display:none!important}
+.li .tick{width:26px;height:26px;border-radius:50%;border:2px solid var(--border);display:grid;place-items:center;flex:none;color:transparent}
+.li .tick svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.li.picked .tick{background:var(--pri);border-color:var(--pri);color:var(--pri-ink)}
+.li.picked{background:var(--pri-soft)}
+.li.selecting .chev,.li.selecting .r{display:none}
+.li.selecting+.li::before{left:110px}
 /* ---------- Toast ---------- */
 .toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,24px);background:var(--ink);color:var(--bg);padding:13px 20px;border-radius:14px;font-size:15px;font-weight:600;opacity:0;pointer-events:none;transition:.25s cubic-bezier(.2,.8,.2,1);z-index:99;max-width:92vw;box-shadow:0 10px 30px rgba(0,0,0,.3)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+.toast{display:flex;align-items:center;gap:14px}
+.toast.act.show{pointer-events:auto}
+.toast button{border:0;background:none;color:var(--toast-act);font-weight:750;font-size:15px;padding:6px 4px;cursor:pointer;white-space:nowrap}
+
 
 /* ---------- Botão flutuante ---------- */
 .fab{position:fixed;right:18px;bottom:calc(var(--tab-h) + var(--safe-b) + 16px);width:60px;height:60px;border-radius:50%;border:0;background:var(--pri);color:var(--pri-ink);box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:35;display:none;place-items:center;cursor:pointer}
@@ -355,6 +370,8 @@ button.kpi:hover{background:var(--surface2)}
   .topbar{backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--bg)}
   .topbar-in{height:52px;padding:0 16px}
   .scanbtn{display:none!important}
+  .show-m{display:inline-flex!important}
+  .offline{top:52px}
   .fab{display:grid}
   .container{padding:14px 16px 100px}
   h1{font-size:34px}

@@ -248,6 +248,27 @@ function addMovement(assetId, type, detail, note, user) {
 }
 const LABEL = { ativo: 'Ativo', manutencao: 'Em manutenção', baixado: 'Baixado' };
 
+// Aplica mudança de setor, responsável e/ou situação a um bem e registra no histórico.
+// Campos ausentes (undefined) ficam como estão. Devolve o estado anterior, para permitir desfazer.
+function moveAsset(cur, chg, note, user) {
+  const next = {
+    sector: chg.sector === undefined ? cur.sector : str(chg.sector, 80),
+    responsible: chg.responsible === undefined ? cur.responsible : str(chg.responsible, 80),
+    status: chg.status === undefined ? cur.status : chg.status,
+  };
+  if (!STATUS.includes(next.status)) throw new HttpError(400, 'Situação inválida.');
+  const prev = { id: cur.id, sector: cur.sector, responsible: cur.responsible, status: cur.status };
+  const ch = [];
+  if (cur.sector !== next.sector) ch.push(`Local: ${cur.sector || '—'} → ${next.sector || '—'}`);
+  if (cur.responsible !== next.responsible) ch.push(`Responsável: ${cur.responsible || '—'} → ${next.responsible || '—'}`);
+  if (cur.status !== next.status) ch.push(`Situação: ${LABEL[cur.status]} → ${LABEL[next.status]}`);
+  if (!ch.length) return null;
+  db.prepare(`UPDATE assets SET sector=?, responsible=?, status=?, updated_at=datetime('now','localtime') WHERE id=?`).run(next.sector, next.responsible, next.status, cur.id);
+  const type = cur.status !== next.status && next.status === 'baixado' ? 'baixa' : 'transferencia';
+  addMovement(cur.id, type, ch.join('; '), note, user);
+  return prev;
+}
+
 // ---------- rotas da API ----------
 async function api(req, res, url) {
   const m = req.method, p = url.pathname;
@@ -335,6 +356,29 @@ async function api(req, res, url) {
       addMovement(id, 'cadastro', generate ? `Cadastrado com etiqueta gerada pelo sistema. Local: ${a.sector || '—'}; responsável: ${a.responsible || '—'}.` : `Cadastrado (entrada: ${a.entry_mode}). Local: ${a.sector || '—'}; responsável: ${a.responsible || '—'}.`, '', user);
       return send(res, 201, { asset: db.prepare('SELECT * FROM assets WHERE id=?').get(id) });
     } catch (e) { throw uniqueError(e); }
+  }
+
+  // ----- transferência em lote e desfazer -----
+  if (m === 'POST' && (p === '/api/assets/batch' || p === '/api/assets/undo')) {
+    const b = await readBody(req);
+    const undo = p === '/api/assets/undo';
+    const items = undo
+      ? (Array.isArray(b.items) ? b.items : []).slice(0, 1000).map(i => ({ id: Number(i.id), chg: { sector: i.sector, responsible: i.responsible, status: i.status } }))
+      : (Array.isArray(b.ids) ? b.ids : []).slice(0, 1000).map(id => ({ id: Number(id), chg: { sector: b.sector ?? undefined, responsible: b.responsible ?? undefined, status: b.status ?? undefined } }));
+    if (!items.length) throw new HttpError(400, 'Nenhum bem informado.');
+    const note = undo ? 'Desfeito pelo usuário' : str(b.note, 300);
+    const previous = []; let skipped = 0;
+    db.exec('BEGIN');
+    try {
+      for (const it of items) {
+        const cur = db.prepare('SELECT * FROM assets WHERE id=?').get(it.id);
+        if (!cur) { skipped++; continue; }
+        const prev = moveAsset(cur, it.chg, note, user);
+        if (prev) previous.push(prev); else skipped++;
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return send(res, 200, { updated: previous.length, skipped, previous });
   }
 
   let mm;
@@ -621,7 +665,7 @@ async function api(req, res, url) {
 }
 
 // ---------- arquivos estáticos ----------
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.webp': 'image/webp', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.webp': 'image/webp', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json; charset=utf-8', '.json': 'application/json; charset=utf-8' };
 function serveStatic(req, res, url) {
   let rel = decodeURIComponent(url.pathname);
   if (rel === '/') rel = '/index.html';
