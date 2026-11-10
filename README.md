@@ -63,11 +63,11 @@ server.js          API, autenticação, banco e arquivos estáticos
 package.json
 data/              banco SQLite (criado automaticamente — faça backup deste arquivo)
 public/
-  index.html       página única (cabeçalho com a logo)
+  index.html       página única (cabeçalho com o ícone do sistema)
   style.css        estilos (responsivo, com modo de impressão)
   app.js           telas: login, painel, patrimônios, inventário, movimentações, usuários
   barcode.js       gerador Code 128
-  logo.webp        logo Hola.com
+  icon.svg         ícone do sistema (aba do navegador e tela inicial do celular)
 ```
 
 As fotos ficam em `data/photos/`.
