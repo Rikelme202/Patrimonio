@@ -10,7 +10,7 @@ const PAGE = 50;
 const ROLES = { admin: 'Administrador', user: 'Usuário', viewer: 'Consulta' };
 const S = {
   page: 1, lock: false, user: null, view: 'dash', adminTab: 'users', labelTab: 'pendente', assets: [], showFilters: false, pending: 0,
-  opts: { responsibles: [] }, lists: null,
+  opts: { responsibles: [] }, lists: null, selecting: false, invRefill: null,
   f: { q: '', category: '', sector: '', status: '', responsible: '', flag: '' }, sel: new Set(),
 };
 
@@ -34,6 +34,8 @@ const IC = {
   search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
   filter: svg('<path d="M4 6h16M7 12h10M10 18h4"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  boxes: svg('<path d="M3 7l5-3 5 3-5 3-5-3zM3 7v6l5 3 5-3V7M11 14l5-3 5 3-5 3-5-3zM11 14v6l5 3 5-3v-6"/>'),
   sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
   moon: svg('<path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/>'),
 };
@@ -49,7 +51,7 @@ async function api(path, opts = {}) {
       body: opts.body ? JSON.stringify(opts.body) : undefined,
       credentials: 'same-origin',
     });
-  } catch { throw new Error('Sem conexão com o servidor. Verifique a internet e tente de novo.'); }
+  } catch { const e = new Error('Sem conexão com o servidor. Verifique a internet e tente de novo.'); e.offline = true; throw e; }
   let data = {};
   try { data = await r.json(); } catch { /* vazio */ }
   if (r.status === 401 && path !== '/login') { S.user = null; render(); }
@@ -57,9 +59,21 @@ async function api(path, opts = {}) {
   return data;
 }
 let toastT;
-function toast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2800);
+// toast('Mensagem') ou toast('Mensagem', { label: 'Desfazer', fn: async () => {} })
+function toast(msg, action) {
+  const t = $('#toast'), b = $('#toastAct');
+  $('#toastMsg').textContent = msg;
+  b.hidden = !action; t.classList.toggle('act', !!action);
+  if (action) { b.textContent = action.label; b.onclick = () => { t.classList.remove('show'); clearTimeout(toastT); action.fn(); }; }
+  t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), action ? 7000 : 2800);
+}
+async function undoMoves(items, after) {
+  if (!items || !items.length) return;
+  try { const r = await api('/assets/undo', { method: 'POST', body: { items } }); toast(r.updated === 1 ? 'Desfeito.' : `${r.updated} alterações desfeitas.`); feedback('ok'); }
+  catch (e) { toast(e.message); return; }
+  after && after();
+  if (S.view === 'assets') refresh(); else if (S.view === 'dash') renderDash();
 }
 const pref = {
   get: k => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -74,6 +88,30 @@ const isAdmin = () => S.user && S.user.role === 'admin';
 const photoURL = a => `/api/assets/${a.id}/photo?v=${encodeURIComponent(a.updated_at)}`;
 const thumb = a => a.photo ? `<img class="thumb" loading="lazy" src="${photoURL(a)}" alt="">` : `<span class="thumb ph">${IC.photo}</span>`;
 const vibrate = ms => { try { navigator.vibrate?.(ms); } catch { /* sem suporte */ } };
+// Som curto de confirmação nas leituras (o iPhone não vibra pelo navegador, então o som é o retorno principal)
+let actx = null;
+const soundOn = () => pref.get('sound') !== 'off';
+function tone(freq, start, dur, type = 'sine', vol = 0.18) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, actx.currentTime + start);
+  g.gain.exponentialRampToValueAtTime(vol, actx.currentTime + start + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + start + dur);
+  o.connect(g).connect(actx.destination); o.start(actx.currentTime + start); o.stop(actx.currentTime + start + dur + 0.02);
+}
+function feedback(kind) {
+  vibrate(kind === 'ok' ? 40 : kind === 'warn' ? [50, 60, 50] : [90, 50, 90]);
+  if (!soundOn()) return;
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+    if (kind === 'ok') { tone(1320, 0, 0.09); }
+    else if (kind === 'warn') { tone(880, 0, 0.08); tone(880, 0.13, 0.08); }
+    else { tone(240, 0, 0.28, 'square', 0.12); }
+  } catch { /* áudio indisponível */ }
+}
+// libera o áudio no primeiro toque (exigência dos navegadores)
+document.addEventListener('pointerdown', () => { if (!actx && soundOn()) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { /* sem áudio */ } } }, { once: true });
 const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
 const days = n => n === 1 ? '1 dia' : `${n} dias`;
 async function shrink(file, max = 1024) {
@@ -162,7 +200,7 @@ function startScanner(area, onCode) {
     let busy = false;
     timer = setInterval(async () => {
       if (busy || stopped) return; busy = true;
-      try { const r = await det.detect(video); if (r.length && r[0].rawValue) { vibrate(60); await onCode(r[0].rawValue); } } catch { /* sem código no quadro */ }
+      try { const r = await det.detect(video); if (r.length && r[0].rawValue) await onCode(r[0].rawValue); } catch { /* sem código no quadro */ }
       busy = false;
     }, 280);
   }).catch(() => { area.innerHTML = '<div class="notice">Não foi possível abrir a câmera. Permita o acesso à câmera nas configurações do navegador.</div>'; });
@@ -230,7 +268,9 @@ function renderChrome() {
   $('#avBtn').onclick = e => {
     e.stopPropagation();
     const open = $('.umenu', ub); if (open) { open.remove(); return; }
-    ub.insertAdjacentHTML('beforeend', `<div class="umenu" role="menu"><div class="who"><b>${esc(S.user.name)}</b><span>${esc(ROLES[S.user.role] || '')}, login ${esc(S.user.username)}</span></div><button id="pwBtn" role="menuitem">Alterar senha</button><button id="outBtn" class="out" role="menuitem">Sair</button></div>`);
+    ub.insertAdjacentHTML('beforeend', `<div class="umenu" role="menu"><div class="who"><b>${esc(S.user.name)}</b><span>${esc(ROLES[S.user.role] || '')}, login ${esc(S.user.username)}</span></div><button id="sndBtn" role="menuitemcheckbox" aria-checked="${soundOn()}">Som nas leituras: ${soundOn() ? 'ligado' : 'desligado'}</button>${installItem()}<button id="pwBtn" role="menuitem">Alterar senha</button><button id="outBtn" class="out" role="menuitem">Sair</button></div>`);
+    $('#sndBtn').onclick = () => { pref.set('sound', soundOn() ? 'off' : 'on'); $('.umenu', ub)?.remove(); toast(soundOn() ? 'Som ligado.' : 'Som desligado.'); if (soundOn()) feedback('ok'); };
+    if ($('#instBtn')) $('#instBtn').onclick = () => { $('.umenu', ub)?.remove(); installApp(); };
     $('#outBtn').onclick = async () => { try { await api('/logout', { method: 'POST' }); } catch { /* ignora */ } S.user = null; S.lists = null; render(); };
     $('#pwBtn').onclick = () => { $('.umenu', ub)?.remove(); openPassword(); };
   };
@@ -310,8 +350,8 @@ function openScan() {
   const lookup = async code => {
     code = String(code).trim(); if (!code) return;
     let r; try { r = await api('/assets/lookup?code=' + encodeURIComponent(code)); } catch (e) { toast(e.message); return; }
-    if (r.asset) { stopScanner(); openDetail(r.asset.id); return; }
-    stopScanner(); area.innerHTML = ''; input.value = code;
+    if (r.asset) { feedback('ok'); stopScanner(); openDetail(r.asset.id); return; }
+    feedback('bad'); stopScanner(); area.innerHTML = ''; input.value = code;
     $('#sres').innerHTML = `<div class="result bad">Nenhum bem tem o código ${esc(code)}.</div>${canEdit() ? '<button class="btn primary block" id="snew">Cadastrar bem com este código</button>' : ''}`;
     if ($('#snew')) $('#snew').onclick = () => openForm(null, { barcode: code, mode: 'manual' });
   };
@@ -345,6 +385,7 @@ async function renderAssets() {
     <div class="field"><label for="fres">Responsável</label><select id="fres"></select></div>
   </div>
   <div class="actbar"><span class="count" id="cnt"></span><div class="spacer"></div>
+    ${canEdit() ? `<button class="btn sm show-m" id="bSel">${S.selecting ? 'Concluir' : 'Selecionar'}</button><button class="btn sm" id="bMove">${IC.swap}<span id="bMoveT">Transferir vários</span></button>` : ''}
     <button class="btn sm" id="bTerm" hidden>${IC.doc}Termo</button>
     <button class="btn sm" id="bLab">${IC.printer}Etiquetas</button>
     <button class="btn sm" id="bCsv">Excel</button>
@@ -363,6 +404,8 @@ async function renderAssets() {
   $('#bCsv').onclick = () => S.assets.length ? exportCSV(S.assets) : toast('Nada para exportar.');
   $('#bPdf').onclick = () => S.assets.length ? printReport(S.assets) : toast('Nada para exportar.');
   $('#bTerm').onclick = () => printTerm(S.f.responsible);
+  if ($('#bMove')) $('#bMove').onclick = () => openBatch(S.assets.filter(a => S.sel.has(a.id)));
+  if ($('#bSel')) $('#bSel').onclick = () => { S.selecting = !S.selecting; if (!S.selecting) S.sel.clear(); $('#bSel').textContent = S.selecting ? 'Concluir' : 'Selecionar'; refresh(); };
   await loadLists();
   refresh();
 }
@@ -389,7 +432,7 @@ async function refresh(openIfSingle) {
   $('#fsec').innerHTML = opts(names(S.lists.sectors), S.f.sector, 'Todos');
   $('#fres').innerHTML = opts(S.opts.responsibles || [], S.f.responsible, 'Todos');
   $('#bTerm').hidden = !S.f.responsible;
-  const labBtn = () => { $('#bLab').innerHTML = `${IC.printer}${S.sel.size ? `Etiquetas (${S.sel.size})` : 'Etiquetas'}`; };
+  const labBtn = () => { $('#bLab').innerHTML = `${IC.printer}${S.sel.size ? `Etiquetas (${S.sel.size})` : 'Etiquetas'}`; if ($('#bMoveT')) $('#bMoveT').textContent = S.sel.size ? `Transferir (${S.sel.size})` : 'Transferir vários'; };
   labBtn();
   const pages = Math.max(1, Math.ceil(S.assets.length / PAGE));
   if (S.page > pages) S.page = pages;
@@ -408,9 +451,14 @@ async function refresh(openIfSingle) {
     ${view.map(a => `<tr class="click" data-id="${a.id}"><td><input type="checkbox" class="check sel" data-id="${a.id}" ${S.sel.has(a.id) ? 'checked' : ''} aria-label="Selecionar ${esc(a.number)}"></td>
     <td><span class="num">${esc(a.number)}</span>${a.label_status === 'pendente' ? '<div style="margin-top:4px"><span class="badge b-pendente">Etiqueta a imprimir</span></div>' : ''}</td><td><div class="cellph">${thumb(a)}<div>${esc(a.description)}<div class="hint">${esc(a.category) || 'Sem categoria'}</div></div></div></td>
     <td>${esc(a.sector) || '—'}</td><td>${esc(a.responsible) || '<span class="hint">—</span>'}</td><td>${badge(a.status)}</td></tr>`).join('')}</tbody></table>`;
-  $('#lw').innerHTML = view.map(a => `<button class="li" data-id="${a.id}">${thumb(a)}<span class="t"><b>${esc(a.description)}</b><span class="meta"><span class="num">${esc(a.number)}</span><span>${esc(a.sector || 'Sem setor')}</span></span></span><span class="r">${badge(a.status)}</span>${CHEV}</button>`).join('');
+  $('#lw').innerHTML = view.map(a => `<button class="li ${S.selecting ? 'selecting' : ''} ${S.sel.has(a.id) ? 'picked' : ''}" data-id="${a.id}" ${S.selecting ? `role="checkbox" aria-checked="${S.sel.has(a.id)}"` : ''}>${S.selecting ? `<span class="tick" aria-hidden="true">${IC.check}</span>` : ''}${thumb(a)}<span class="t"><b>${esc(a.description)}</b><span class="meta"><span class="num">${esc(a.number)}</span><span>${esc(a.sector || 'Sem setor')}</span></span></span><span class="r">${badge(a.status)}</span>${CHEV}</button>`).join('');
   $$('#tw tr.click').forEach(tr => tr.onclick = e => { if (e.target.classList.contains('check')) return; openDetail(Number(tr.dataset.id)); });
-  $$('#lw .li').forEach(b => b.onclick = () => openDetail(Number(b.dataset.id)));
+  $$('#lw .li').forEach(b => b.onclick = () => {
+    const id = Number(b.dataset.id);
+    if (!S.selecting) return openDetail(id);
+    S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id);
+    b.classList.toggle('picked', S.sel.has(id)); b.setAttribute('aria-checked', S.sel.has(id)); labBtn();
+  });
   $$('#tw .sel').forEach(c => c.onchange = () => { c.checked ? S.sel.add(Number(c.dataset.id)) : S.sel.delete(Number(c.dataset.id)); labBtn(); });
   const all = $('#all'); if (all) all.onchange = () => { $$('#tw .sel').forEach(c => { c.checked = all.checked; all.checked ? S.sel.add(Number(c.dataset.id)) : S.sel.delete(Number(c.dataset.id)); }); labBtn(); };
   if (openIfSingle === true && S.assets.length === 1) openDetail(S.assets[0].id);
@@ -495,10 +543,131 @@ async function openTransfer(a) {
     if (body.sector === a.sector && body.responsible === a.responsible && status === a.status) { $('#te').textContent = 'Nada mudou. Escolha outro setor, responsável ou situação.'; return; }
     if (status === 'baixado' && a.status !== 'baixado' && !confirm('Marcar este bem como baixado? Ele sai da contagem do patrimônio ativo.')) return;
     $('#tsv').disabled = true;
-    try { await api('/assets/' + a.id, { method: 'PUT', body }); toast('Transferência salva.'); vibrate(30); openDetail(a.id); if (S.view === 'assets') refresh(); else if (S.view === 'dash') renderDash(); }
+    try {
+      await api('/assets/' + a.id, { method: 'PUT', body });
+      const prev = [{ id: a.id, sector: a.sector, responsible: a.responsible, status: a.status }];
+      toast(status === 'baixado' && a.status !== 'baixado' ? 'Bem baixado.' : 'Transferência salva.', { label: 'Desfazer', fn: () => undoMoves(prev, () => { if (!$('#modal').hidden) openDetail(a.id); }) });
+      feedback('ok'); openDetail(a.id); if (S.view === 'assets') refresh(); else if (S.view === 'dash') renderDash();
+    }
     catch (er) { $('#te').textContent = er.message; $('#tsv').disabled = false; }
   };
 }
+
+// ---------- transferir vários bens ----------
+async function openBatch(initial = []) {
+  await Promise.all([loadLists(), loadResponsibles()]);
+  const items = new Map(initial.map(a => [a.id, a]));
+  let status = '';
+  openModal(`<h2>Transferir vários bens</h2><p class="sub" style="margin:-6px 0 16px">Escolha o destino e depois leia ou digite os códigos dos bens que vão junto.</p>
+  <form id="bf" autocomplete="off">
+    <div class="card" style="margin-bottom:14px">
+      <div class="field"><span class="lbl">Novo setor</span>${pickHTML('bsec', names(S.lists.sectors), '', 'Nenhum setor cadastrado.')}<div class="hint">Sem escolha, cada bem continua no setor atual.</div></div>
+      <div class="field"><label for="bres">Novo responsável</label><input id="bres" list="dres" placeholder="Deixe vazio para manter o atual"><datalist id="dres">${(S.opts.responsibles || []).map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div class="field" style="margin-bottom:0"><span class="lbl">Situação</span><div class="seg" id="bst"><button type="button" data-s="" class="on">Manter</button>${Object.entries(STATUS).map(([k, l]) => `<button type="button" data-s="${k}">${l}</button>`).join('')}</div></div>
+    </div>
+    <span class="lbl">Bens que vão ser transferidos</span>
+    <div class="seg" id="bmode" style="margin-bottom:12px"><button type="button" data-m="type">Leitor ou digitação</button><button type="button" data-m="camera">Câmera</button></div>
+    <div id="barea"></div>
+    <div class="addrow"><input id="bcode" class="mono" enterkeyhint="go" placeholder="Código ou número do patrimônio" aria-label="Código do bem"><button type="button" class="btn" id="badd">${IC.plus}Adicionar</button></div>
+    <div id="bmsg" role="status" aria-live="polite"></div>
+    <div class="group" id="blist"></div>
+    <div class="field"><label for="bnote">Motivo</label><input id="bnote" maxlength="300" placeholder="Ex.: mudança da equipe para o 2º andar"></div>
+    <p class="err" id="be"></p>
+    <div class="modal-actions"><button type="button" class="btn" id="cx">Cancelar</button><button class="btn primary" id="bgo" disabled>Transferir</button></div>
+  </form>`);
+  const getSec = bindPick('bsec');
+  $$('#bst button').forEach(b => b.onclick = () => { status = b.dataset.s; $$('#bst button').forEach(x => x.classList.toggle('on', x === b)); paint(); });
+  $$('#bsec button').forEach(b => b.addEventListener('click', () => setTimeout(paint)));
+  $('#bres').oninput = () => paint();
+  const paint = () => {
+    const list = [...items.values()];
+    $('#blist').innerHTML = list.length ? list.map(a => `<div class="gi"><span style="color:var(--ink);flex:1;min-width:0"><b class="num">${esc(a.number)}</b> ${esc(a.description)}<div class="hint" style="margin:0">Hoje em ${esc(a.sector || 'nenhum setor')}${a.responsible ? `, com ${esc(a.responsible)}` : ''}</div></span><button type="button" class="btn sm" data-rm="${a.id}" aria-label="Tirar ${esc(a.number)} da lista">Tirar</button></div>`).join('')
+      : '<div class="gi"><span>Nenhum bem na lista ainda.</span></div>';
+    $$('#blist [data-rm]').forEach(b => b.onclick = () => { items.delete(Number(b.dataset.rm)); paint(); });
+    const changes = getSec() || $('#bres').value.trim() || status;
+    const n = list.length;
+    $('#bgo').disabled = !n || !changes;
+    $('#bgo').textContent = !n ? 'Transferir' : `Transferir ${plural(n, 'bem', 'bens')}`;
+  };
+  const msg = (kind, text) => { $('#bmsg').innerHTML = `<div class="result ${kind}">${text}</div>`; feedback(kind === 'ok' ? 'ok' : kind === 'warn' ? 'warn' : 'bad'); };
+  let last = '', lastAt = 0;
+  const add = async code => {
+    code = String(code).trim(); if (!code) return;
+    if (code === last && Date.now() - lastAt < 2500) return; last = code; lastAt = Date.now();
+    $('#bcode').value = '';
+    let r; try { r = await api('/assets/lookup?code=' + encodeURIComponent(code)); } catch (e) { msg('bad', esc(e.message)); return; }
+    if (!r.asset) return msg('bad', `Código não cadastrado: ${esc(code)}`);
+    if (items.has(r.asset.id)) return msg('warn', `${esc(r.asset.number)} já está na lista.`);
+    items.set(r.asset.id, r.asset); paint();
+    msg('ok', `Adicionado: ${esc(r.asset.number)}, ${esc(r.asset.description)}`);
+    if (!scanStop) $('#bcode').focus();
+  };
+  $('#badd').onclick = () => add($('#bcode').value);
+  $('#bcode').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add($('#bcode').value); } };
+  const setMode = m => {
+    pref.set('batchMode', m);
+    $$('#bmode button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+    if (m === 'camera') startScanner($('#barea'), add); else { stopScanner(); $('#barea').innerHTML = ''; }
+  };
+  $$('#bmode button').forEach(b => b.onclick = () => setMode(b.dataset.m));
+  setMode(pref.get('batchMode') || 'type');
+  $('#cx').onclick = closeModal;
+  paint();
+  $('#bf').onsubmit = async e => {
+    e.preventDefault();
+    const ids = [...items.keys()], sector = getSec(), responsible = $('#bres').value.trim();
+    if (!ids.length) return;
+    if (status === 'baixado' && !confirm(`Marcar ${plural(ids.length, 'bem', 'bens')} como baixado? Eles saem da contagem do patrimônio ativo.`)) return;
+    $('#bgo').disabled = true; $('#bgo').textContent = 'Transferindo…';
+    const body = { ids, note: $('#bnote').value };
+    if (sector) body.sector = sector;
+    if (responsible) body.responsible = responsible;
+    if (status) body.status = status;
+    try {
+      const r = await api('/assets/batch', { method: 'POST', body });
+      closeModal(); S.sel.clear(); S.selecting = false;
+      feedback('ok');
+      toast(`${plural(r.updated, 'bem transferido', 'bens transferidos')}${r.skipped ? `, ${r.skipped} já estava${r.skipped > 1 ? 'm' : ''} assim` : ''}.`, r.updated ? { label: 'Desfazer', fn: () => undoMoves(r.previous) } : null);
+      if (S.view === 'assets') renderAssets(); else if (S.view === 'dash') renderDash();
+    } catch (er) { $('#be').textContent = er.message; paint(); }
+  };
+}
+
+// ---------- inventário sem internet: fila de leituras ----------
+const queue = {
+  get: () => { try { return JSON.parse(pref.get('invQueue') || '[]'); } catch { return []; } },
+  set: q => pref.set('invQueue', JSON.stringify(q)),
+};
+let flushing = false;
+async function flushQueue() {
+  if (flushing || !navigator.onLine || !S.user) return;
+  let q = queue.get(); if (!q.length) return;
+  flushing = true; let sent = 0;
+  for (const item of [...q]) {
+    try { await api(`/inventories/${item.inv}/scan`, { method: 'POST', body: { code: item.code } }); sent++; q = q.filter(x => x !== item && !(x.inv === item.inv && x.code === item.code && x.at === item.at)); }
+    catch (e) { if (e.offline) break; q = q.filter(x => !(x.inv === item.inv && x.code === item.code && x.at === item.at)); }
+    queue.set(q);
+  }
+  flushing = false;
+  if (sent) { toast(`${plural(sent, 'leitura guardada foi enviada', 'leituras guardadas foram enviadas')}.`); S.invRefill && S.invRefill(); }
+}
+function paintOnline() { $('#offline').hidden = navigator.onLine; if (navigator.onLine) flushQueue(); }
+window.addEventListener('online', paintOnline);
+window.addEventListener('offline', paintOnline);
+setInterval(flushQueue, 30000);
+
+// ---------- instalar como aplicativo ----------
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
+const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const installItem = () => standalone() ? '' : (installEvt || isIOS()) ? '<button id="instBtn" role="menuitem">Instalar no celular</button>' : '';
+async function installApp() {
+  if (installEvt) { installEvt.prompt(); const r = await installEvt.userChoice; if (r.outcome === 'accepted') toast('Aplicativo instalado.'); installEvt = null; return; }
+  openModal(`<h2>Instalar no iPhone</h2><div class="group"><div class="gi"><b style="text-align:left">1. Toque no botão Compartilhar do Safari, o quadrado com a seta para cima.</b></div><div class="gi"><b style="text-align:left">2. Escolha "Adicionar à Tela de Início".</b></div><div class="gi"><b style="text-align:left">3. Toque em "Adicionar". O ícone do Patrimônio aparece junto com seus aplicativos.</b></div></div><div class="modal-actions"><button class="btn primary" id="cl">Entendi</button></div>`);
+  $('#cl').onclick = closeModal;
+}
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => { /* sem suporte */ }));
 
 // ---------- cadastro / edição ----------
 async function openForm(a, pre = {}) {
@@ -555,7 +724,7 @@ async function openForm(a, pre = {}) {
     $('#sv').className = gen ? 'btn tagbtn' : 'btn primary';
     const hint = $('#bh');
     if (m === 'leitor') { hint.textContent = 'Aponte o leitor para a etiqueta. O código entra sozinho.'; bar.focus(); }
-    else if (m === 'camera') { hint.textContent = ''; startScanner($('#scanArea'), async code => { bar.value = code; stopScanner(); $('#scanArea').innerHTML = ''; toast('Código lido: ' + code); await checkDup(); $('#fn').focus(); }); }
+    else if (m === 'camera') { hint.textContent = ''; startScanner($('#scanArea'), async code => { feedback('ok'); bar.value = code; stopScanner(); $('#scanArea').innerHTML = ''; toast('Código lido: ' + code); await checkDup(); $('#fn').focus(); }); }
     else if (m === 'manual') hint.textContent = 'Digite o número que aparece abaixo das barras.';
     else hint.textContent = '';
   }
@@ -723,11 +892,13 @@ async function openInv(id) {
     $('#px').disabled = !missing.length;
   };
   fill(data);
-  $('#cl').onclick = () => { closeModal(); renderInv(); };
+  $('#cl').onclick = () => { S.invRefill = null; closeModal(); renderInv(); };
   $('#px').onclick = () => printReport(missing, `Itens faltantes em ${inv.sector || 'todos os setores'}`);
   if ($('#en')) $('#en').onclick = async () => { if (confirm(`Encerrar o inventário? ${plural(missing.length, 'item ficará registrado', 'itens ficarão registrados')} como faltante.`)) { try { await api(`/inventories/${id}/close`, { method: 'POST' }); openInv(id); } catch (e) { toast(e.message); } } };
   if (!can) return;
   const sc = $('#sc');
+  S.invRefill = async () => { if ($('#il')) { try { fill(await api('/inventories/' + id)); } catch { /* ignora */ } } };
+  const pendingHere = () => queue.get().filter(x => x.inv === id).length;
   let last = '', lastAt = 0;
   const scan = async code => {
     code = String(code).trim(); if (!code) return;
@@ -737,9 +908,15 @@ async function openInv(id) {
       const r = await api(`/inventories/${id}/scan`, { method: 'POST', body: { code } });
       const m = { ok: ['ok', 'Encontrado'], outside: ['warn', 'Encontrado, mas é de outro setor ou está baixado'], duplicate: ['warn', 'Já tinha sido lido'], unknown: ['bad', 'Código não cadastrado'] }[r.result];
       $('#sr').innerHTML = `<div class="result ${m[0]}">${m[1]}: ${r.asset ? `${esc(r.asset.number)}, ${esc(r.asset.description)}` : esc(code)}</div>`;
-      vibrate(r.result === 'ok' ? 40 : [60, 60, 60]);
+      feedback(m[0]);
       if (r.result === 'ok' || r.result === 'outside') fill(await api('/inventories/' + id));
-    } catch (er) { toast(er.message); }
+    } catch (er) {
+      if (er.offline) {
+        queue.set([...queue.get(), { inv: id, code, at: Date.now() }]);
+        $('#sr').innerHTML = `<div class="result warn">Sem internet. Leitura de ${esc(code)} guardada; ${plural(pendingHere(), 'leitura será enviada', 'leituras serão enviadas')} quando a conexão voltar.</div>`;
+        feedback('warn');
+      } else toast(er.message);
+    }
     sc.value = ''; if (!scanStop) sc.focus();
   };
   const setMode = m => {
@@ -893,5 +1070,6 @@ function openImport() {
 (async () => {
   try { S.user = (await api('/me')).user; } catch { S.user = null; }
   render();
-  if (S.user && !S.user.must_change) refreshPending();
+  paintOnline();
+  if (S.user && !S.user.must_change) { refreshPending(); flushQueue(); }
 })();

@@ -21,6 +21,10 @@ Sistema web multiusuário para cadastrar, localizar e controlar bens patrimoniai
 | **Categorias e setores** | O administrador cadastra as listas na aba Admin; no cadastro a pessoa só toca na opção, sem digitar. O último setor e categoria usados ficam pré-selecionados. |
 | **Forma de entrada** | Ao cadastrar você escolhe: **Gerar etiqueta** (o sistema cria número e código de barras para um bem que ainda não tem), **Leitor USB**, **Câmera** ou **Digitar**. |
 | **Etiquetas geradas** | Aba com a fila de etiquetas a imprimir e as já impressas. Imprime em folha A4 (3 colunas) ou em etiqueta térmica 50 × 30 mm, e permite reimprimir. |
+| **Transferir vários** | Escolha o destino (setor, responsável e/ou situação) e leia ou digite os códigos em sequência, ou marque os bens na lista (no celular, pelo botão Selecionar). Tudo vai de uma vez. |
+| **Desfazer** | Depois de transferir, dar baixa ou transferir em lote, o aviso traz um botão Desfazer por alguns segundos. |
+| **Som nas leituras** | Bipe curto quando o código é encontrado e som grave quando não é, além da vibração. Pode ser desligado no menu da conta. |
+| **Aplicativo no celular** | Pode ser instalado na tela inicial (Android e iPhone) e abre mesmo sem internet. No inventário, as leituras feitas sem conexão ficam guardadas e são enviadas sozinhas quando a internet volta. |
 | **Tema** | Claro ou escuro, com cores de alto contraste; segue o celular por padrão e pode ser trocado no botão do topo. |
 | **Detecção de duplicidade** | Número de barras e número são únicos; o sistema avisa ao digitar/ler um código já existente. |
 | **Histórico** | Toda criação, transferência (setor/responsável/situação), baixa e edição é registrada com data, usuário e observação. |
