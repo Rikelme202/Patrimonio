@@ -85,7 +85,33 @@ CREATE INDEX IF NOT EXISTS idx_mov_asset ON movements(asset_id);
     asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     found_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     PRIMARY KEY (inventory_id, asset_id)
+  );
+  CREATE TABLE IF NOT EXISTS lists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK (kind IN ('category','sector')),
+    name TEXT NOT NULL COLLATE NOCASE,
+    UNIQUE (kind, name)
   );`);
+  const acols = db.prepare('PRAGMA table_info(assets)').all().map(c => c.name);
+  if (!acols.includes('label_status')) db.exec("ALTER TABLE assets ADD COLUMN label_status TEXT NOT NULL DEFAULT ''");
+  if (!acols.includes('label_printed_at')) db.exec("ALTER TABLE assets ADD COLUMN label_printed_at TEXT NOT NULL DEFAULT ''");
+  // primeira vez: aproveita categorias e setores já usados nos bens
+  if (db.prepare('SELECT COUNT(*) c FROM lists').get().c === 0) {
+    db.exec(`INSERT OR IGNORE INTO lists (kind,name) SELECT 'category', category FROM assets WHERE category<>'';
+             INSERT OR IGNORE INTO lists (kind,name) SELECT 'sector', sector FROM assets WHERE sector<>'';`);
+  }
+}
+const addToLists = (category, sector) => {
+  if (category) db.prepare("INSERT OR IGNORE INTO lists (kind,name) VALUES ('category',?)").run(category);
+  if (sector) db.prepare("INSERT OR IGNORE INTO lists (kind,name) VALUES ('sector',?)").run(sector);
+};
+// Próximo número livre no formato PAT-000000 (usado também como código de barras)
+function nextCode() {
+  const max = db.prepare("SELECT MAX(CAST(SUBSTR(number,5) AS INTEGER)) m FROM assets WHERE number GLOB 'PAT-[0-9]*'").get().m || 0;
+  for (let n = max + 1; ; n++) {
+    const code = 'PAT-' + String(n).padStart(6, '0');
+    if (!db.prepare('SELECT 1 FROM assets WHERE number=? OR barcode=?').get(code, code)) return code;
+  }
 }
 
 // ---------- senhas ----------
@@ -115,7 +141,7 @@ if (db.prepare('SELECT COUNT(*) c FROM users').get().c === 0) {
 
 // ---------- utilidades ----------
 const STATUS = ['ativo', 'manutencao', 'baixado'];
-const MODES = ['manual', 'leitor', 'camera'];
+const MODES = ['manual', 'leitor', 'camera', 'gerado'];
 const COOKIE = 'sid';
 const SESSION_MS = 1000 * 60 * 60 * 12;
 const attempts = new Map(); // ip -> {n, until}
@@ -297,12 +323,16 @@ async function api(req, res, url) {
     return send(res, 200, { asset: a || null });
   }
   if (m === 'POST' && p === '/api/assets') {
-    const a = validateAsset(await readBody(req));
+    const body = await readBody(req);
+    const generate = body.generate === true;
+    if (generate) { const code = nextCode(); body.number = code; body.barcode = code; body.entry_mode = 'gerado'; }
+    const a = validateAsset(body);
     try {
-      const r = db.prepare(`INSERT INTO assets (barcode,number,description,category,sector,responsible,status,entry_mode,value,acquired_at,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(a.barcode, a.number, a.description, a.category, a.sector, a.responsible, a.status, a.entry_mode, a.value, a.acquired_at, a.notes);
+      const r = db.prepare(`INSERT INTO assets (barcode,number,description,category,sector,responsible,status,entry_mode,value,acquired_at,notes,label_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(a.barcode, a.number, a.description, a.category, a.sector, a.responsible, a.status, a.entry_mode, a.value, a.acquired_at, a.notes, generate ? 'pendente' : '');
       const id = Number(r.lastInsertRowid);
-      addMovement(id, 'cadastro', `Cadastrado (entrada: ${a.entry_mode}). Local: ${a.sector || '—'}; responsável: ${a.responsible || '—'}.`, '', user);
+      addToLists(a.category, a.sector);
+      addMovement(id, 'cadastro', generate ? `Cadastrado com etiqueta gerada pelo sistema. Local: ${a.sector || '—'}; responsável: ${a.responsible || '—'}.` : `Cadastrado (entrada: ${a.entry_mode}). Local: ${a.sector || '—'}; responsável: ${a.responsible || '—'}.`, '', user);
       return send(res, 201, { asset: db.prepare('SELECT * FROM assets WHERE id=?').get(id) });
     } catch (e) { throw uniqueError(e); }
   }
@@ -401,6 +431,7 @@ async function api(req, res, url) {
         try {
           const a = validateAsset(row || {});
           const r = ins.run(a.barcode, a.number, a.description, a.category, a.sector, a.responsible, a.status, a.value, a.acquired_at, a.notes);
+          addToLists(a.category, a.sector);
           addMovement(Number(r.lastInsertRowid), 'cadastro', 'Importado em massa (planilha).', '', user);
           created++;
         } catch (e) { const ee = uniqueError(e); errors.push({ line: i + 2, msg: ee.message }); }
@@ -430,6 +461,62 @@ async function api(req, res, url) {
     return send(res, 200, { audit: db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 300').all() });
   }
 
+  // ----- listas de categorias e setores -----
+  if (m === 'GET' && p === '/api/lists') {
+    const rows = db.prepare(`SELECT l.id, l.kind, l.name,
+      (SELECT COUNT(*) FROM assets a WHERE (l.kind='category' AND a.category=l.name) OR (l.kind='sector' AND a.sector=l.name)) uses
+      FROM lists l ORDER BY l.name COLLATE NOCASE`).all();
+    return send(res, 200, { categories: rows.filter(r => r.kind === 'category'), sectors: rows.filter(r => r.kind === 'sector') });
+  }
+  if (p === '/api/lists' && m === 'POST') {
+    if (!isAdmin) throw new HttpError(403, 'Apenas administradores podem cadastrar categorias e setores.');
+    const b = await readBody(req);
+    const kind = b.kind === 'sector' ? 'sector' : b.kind === 'category' ? 'category' : null;
+    const name = str(b.name, 80);
+    if (!kind) throw new HttpError(400, 'Tipo inválido.');
+    if (!name) throw new HttpError(400, 'Informe o nome.');
+    const r = db.prepare('INSERT OR IGNORE INTO lists (kind,name) VALUES (?,?)').run(kind, name);
+    if (!r.changes) throw new HttpError(409, `"${name}" já está cadastrado.`);
+    audit(user, 'lista_criada', `${kind === 'sector' ? 'Setor' : 'Categoria'}: ${name}`, req);
+    return send(res, 201, { ok: true });
+  }
+  if ((mm = p.match(/^\/api\/lists\/(\d+)$/))) {
+    if (!isAdmin) throw new HttpError(403, 'Apenas administradores.');
+    const item = db.prepare('SELECT * FROM lists WHERE id=?').get(Number(mm[1]));
+    if (!item) throw new HttpError(404, 'Item não encontrado.');
+    const col = item.kind === 'sector' ? 'sector' : 'category';
+    if (m === 'PUT') {
+      const name = str((await readBody(req)).name, 80);
+      if (!name) throw new HttpError(400, 'Informe o nome.');
+      try { db.prepare('UPDATE lists SET name=? WHERE id=?').run(name, item.id); }
+      catch { throw new HttpError(409, `"${name}" já está cadastrado.`); }
+      const n = db.prepare(`UPDATE assets SET ${col}=? WHERE ${col}=?`).run(name, item.name).changes;
+      audit(user, 'lista_renomeada', `${item.name} → ${name} (${n} bem(ns) atualizados)`, req);
+      return send(res, 200, { ok: true, updated: n });
+    }
+    if (m === 'DELETE') {
+      db.prepare('DELETE FROM lists WHERE id=?').run(item.id);
+      audit(user, 'lista_removida', `${item.kind === 'sector' ? 'Setor' : 'Categoria'}: ${item.name}`, req);
+      return send(res, 200, { ok: true });
+    }
+  }
+
+  // ----- fila de etiquetas -----
+  if (m === 'GET' && p === '/api/labels') {
+    const status = url.searchParams.get('status') === 'impressa' ? 'impressa' : 'pendente';
+    const order = status === 'impressa' ? 'label_printed_at DESC, id DESC' : 'id DESC';
+    return send(res, 200, { labels: db.prepare(`SELECT * FROM assets WHERE label_status=? ORDER BY ${order} LIMIT 500`).all(status) });
+  }
+  if (m === 'POST' && p === '/api/labels/mark') {
+    const b = await readBody(req);
+    const ids = Array.isArray(b.ids) ? b.ids.map(Number).filter(Number.isInteger).slice(0, 1000) : [];
+    const status = b.status === 'impressa' ? 'impressa' : b.status === 'pendente' ? 'pendente' : '';
+    if (!ids.length) throw new HttpError(400, 'Nenhuma etiqueta selecionada.');
+    const st = db.prepare(`UPDATE assets SET label_status=?, label_printed_at=CASE WHEN ?='impressa' THEN datetime('now','localtime') ELSE label_printed_at END WHERE id=?`);
+    db.exec('BEGIN'); try { ids.forEach(id => st.run(status, status, id)); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return send(res, 200, { ok: true, count: ids.length });
+  }
+
   // ----- painel -----
   if (m === 'GET' && p === '/api/dashboard') {
     const one = sql => db.prepare(sql).get();
@@ -447,6 +534,7 @@ async function api(req, res, url) {
         FROM assets a WHERE a.status='manutencao' ORDER BY since LIMIT 10`),
       noResponsible: one("SELECT COUNT(*) c FROM assets WHERE responsible='' AND status<>'baixado'").c,
       noPhoto: one("SELECT COUNT(*) c FROM assets WHERE photo='' AND status<>'baixado'").c,
+      pendingLabels: one("SELECT COUNT(*) c FROM assets WHERE label_status='pendente'").c,
     });
   }
 

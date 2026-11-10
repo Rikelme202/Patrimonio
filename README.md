@@ -16,9 +16,12 @@ Sistema web multiusuário para cadastrar, localizar e controlar bens patrimoniai
 | Área | O que faz |
 |---|---|
 | **Login** | Acesso por usuário e senha, sessão de 12 h, opção de lembrar o usuário, mostrar/ocultar senha e bloqueio temporário após muitas tentativas erradas. |
-| **Painel** | Total de bens, ativos/manutenção/baixados, valor total, gráficos por categoria e setor e últimas movimentações. |
-| **Patrimônios** | Cadastro e edição com número de barras, número, descrição, categoria, setor/local, responsável, situação, valor, data de aquisição e observações. Busca e filtros. |
-| **Forma de entrada** | Ao cadastrar você escolhe: **Manual**, **Leitor USB** (campo focado, o leitor "digita" e o cursor avança) ou **Câmera** (leitura pelo navegador). Leitor e câmera reabrem o formulário para cadastrar em sequência. |
+| **Painel** | Total de bens, em manutenção, baixados e etiquetas a imprimir; o que precisa de atenção; gráficos por categoria e setor; últimas movimentações. |
+| **Bens** | Cadastro e edição com descrição, categoria, setor, responsável, situação, foto e observações. A data de cadastro é registrada automaticamente. Busca, filtros, transferência rápida e termo de responsabilidade. |
+| **Categorias e setores** | O administrador cadastra as listas na aba Admin; no cadastro a pessoa só toca na opção, sem digitar. O último setor e categoria usados ficam pré-selecionados. |
+| **Forma de entrada** | Ao cadastrar você escolhe: **Gerar etiqueta** (o sistema cria número e código de barras para um bem que ainda não tem), **Leitor USB**, **Câmera** ou **Digitar**. |
+| **Etiquetas geradas** | Aba com a fila de etiquetas a imprimir e as já impressas. Imprime em folha A4 (3 colunas) ou em etiqueta térmica 50 × 30 mm, e permite reimprimir. |
+| **Tema** | Claro ou escuro, com cores de alto contraste; segue o celular por padrão e pode ser trocado no botão do topo. |
 | **Detecção de duplicidade** | Número de barras e número são únicos; o sistema avisa ao digitar/ler um código já existente. |
 | **Histórico** | Toda criação, transferência (setor/responsável/situação), baixa e edição é registrada com data, usuário e observação. |
 | **Inventário** | Escolha um setor, leia os códigos e veja o que foi encontrado, o que **está faltando** e o que está **fora do setor** ou baixado. |
