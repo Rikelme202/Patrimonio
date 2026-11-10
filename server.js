@@ -280,10 +280,13 @@ async function api(req, res, url) {
       where.push(`(barcode LIKE ? ESCAPE '\\' OR number LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR responsible LIKE ? ESCAPE '\\')`);
       args.push(like, like, like, like);
     }
-    for (const f of ['category', 'sector', 'status']) {
+    for (const f of ['category', 'sector', 'status', 'responsible']) {
       const v = str(url.searchParams.get(f), 80);
       if (v) { where.push(`${f}=?`); args.push(v); }
     }
+    const flag = url.searchParams.get('flag');
+    if (flag === 'sem_responsavel') where.push("responsible='' AND status<>'baixado'");
+    if (flag === 'sem_foto') where.push("photo='' AND status<>'baixado'");
     const rows = db.prepare(`SELECT * FROM assets ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 5000`).all(...args);
     const opt = col => db.prepare(`SELECT DISTINCT ${col} v FROM assets WHERE ${col}<>'' ORDER BY ${col} COLLATE NOCASE`).all().map(r => r.v);
     return send(res, 200, { assets: rows, categories: opt('category'), sectors: opt('sector'), responsibles: opt('responsible') });
@@ -438,6 +441,12 @@ async function api(req, res, url) {
       byCategory: all("SELECT COALESCE(NULLIF(category,''),'Sem categoria') k, COUNT(*) n FROM assets GROUP BY k ORDER BY n DESC LIMIT 8"),
       bySector: all("SELECT COALESCE(NULLIF(sector,''),'Sem setor') k, COUNT(*) n FROM assets GROUP BY k ORDER BY n DESC LIMIT 8"),
       recent: all('SELECT mv.*, a.number, a.description FROM movements mv JOIN assets a ON a.id=mv.asset_id ORDER BY mv.id DESC LIMIT 6'),
+      valueBySector: all("SELECT COALESCE(NULLIF(sector,''),'Sem setor') k, COALESCE(SUM(value),0) v, COUNT(*) n FROM assets WHERE status<>'baixado' GROUP BY k ORDER BY v DESC LIMIT 8"),
+      maintenance: all(`SELECT a.id, a.number, a.description, a.sector,
+        COALESCE((SELECT MAX(m.created_at) FROM movements m WHERE m.asset_id=a.id AND m.detail LIKE '%→ Em manutenção%'), a.updated_at) since
+        FROM assets a WHERE a.status='manutencao' ORDER BY since LIMIT 10`),
+      noResponsible: one("SELECT COUNT(*) c FROM assets WHERE responsible='' AND status<>'baixado'").c,
+      noPhoto: one("SELECT COUNT(*) c FROM assets WHERE photo='' AND status<>'baixado'").c,
     });
   }
 
